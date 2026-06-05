@@ -1,0 +1,9 @@
+pyrogram==2.0.106
+# TgCrypto requires C++ build tools on Windows.
+# On Linux/Mac/Render it installs fine and improves performance.
+# On Windows dev machines, you can skip it — pyrogram works without it.
+TgCrypto==1.2.5
+motor==3.3.2
+dnspython==2.6.1
+aiohttp==3.9.5
+python-dotenv==1.0.1

@@ -1,0 +1,40 @@
+# Sizu AI Bot — .gitignore
+# Environment & secrets
+.env
+*.env
+
+# Pyrogram session files
+*.session
+*.session.bak
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db

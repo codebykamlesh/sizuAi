@@ -1,0 +1,44 @@
+services:
+  - type: worker
+    name: SizuAI
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: SUDO_USERS
+        sync: false
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: SizuAI
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: deepseek/deepseek-chat-v3-0324:free
+      - key: AI_FALLBACK_MODEL
+        value: qwen/qwen3-8b:free
+      - key: MAX_MEMORY
+        value: "20"
+      - key: MAX_TOKENS
+        value: "300"
+      - key: AI_TEMPERATURE
+        value: "0.9"
+      - key: TRIGGER_WORDS
+        value: "sizu,hey sizu,yo sizu"
+      - key: RATE_LIMIT_MESSAGES
+        value: "5"
+      - key: RATE_LIMIT_WINDOW
+        value: "10"
+      - key: PORT
+        value: "8080"
+      - key: KEEPALIVE
+        value: "true"
