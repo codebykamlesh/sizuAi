@@ -438,34 +438,35 @@ async def cmd_rps(client: Client, message: Message):
 # ── Coin Flip ─────────────────────────────────────────────────────────────────
 
 @register_command(
-    name="coin",
-    description="Flip a coin and guess the outcome.",
+    name="flip",
+    description="Flip a coin.",
     category="Games",
-    syntax="/coin <heads|tails>",
-    examples=["/coin heads"],
-    required_args=1
+    syntax="/flip",
+    examples=["/flip"]
 )
-async def cmd_coin(client: Client, message: Message):
-    guess = message.command[1].lower()
-    if guess not in ["heads", "tails"]:
-        raise CommandValidationError("Invalid guess. Must be heads or tails.")
-        
-    sides = ["heads", "tails"]
+async def cmd_flip(client: Client, message: Message):
+    sides = ["Heads", "Tails"]
     result = random.choice(sides)
-    user = message.from_user
     
-    msg = await message.reply("flipping the coin... 🪙")
+    msg = await message.reply("Flipping a coin... 🪙")
     await asyncio.sleep(1.0)
     
-    correct = (guess == result)
-    streak = 0
-    if user:
-        streak = await db.update_coin_streak(user.id, user.first_name or "Someone", user.username or "", correct)
-        
-    emoji = "🪙" if result == "heads" else "🦅"
-    result_str = f"It's **{result.upper()}** {emoji}!\n\n"
-    
-    if correct:
-        await msg.edit(f"{result_str}🎉 You guessed right!\n🔥 Current Streak: `{streak}`")
-    else:
-        await msg.edit(f"{result_str}❌ You guessed wrong.\n└ Streak reset to 0.")
+    # 50% chance to append a fun message
+    fun_text = ""
+    if random.random() < 0.5:
+        if result == "Heads":
+            fun_text = "\n" + random.choice([
+                "Looks like luck is on your side 😏",
+                "Heads up! You got it ✨",
+                "Lucky day today, huh? ❤️",
+                "Heads wins! You're on fire 🔥"
+            ])
+        else:
+            fun_text = "\n" + random.choice([
+                "Better luck next time 😭",
+                "Tails... oof, not this time 💀",
+                "Sad vibes only, it's Tails 🤧",
+                "Tails it is. Unlucky! 🤌"
+            ])
+            
+    await msg.edit(f"🪙 **{result}**{fun_text}")

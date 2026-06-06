@@ -183,7 +183,8 @@ from core.commands import register_command
     category="AI",
     syntax="/reset",
     examples=["/reset"],
-    aliases=["forget"]
+    aliases=["forget"],
+    permissions="Owner"
 )
 async def cmd_reset(client: Client, message: Message):
     await db.clear_chat_history(message.chat.id)

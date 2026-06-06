@@ -166,13 +166,41 @@ async def cmd_info(client: Client, message: Message):
             "Or use:\n`/info @username`"
         )
 
+    # Fetch the full user object to ensure all fields (dc_id, premium, phone) are populated
+    try:
+        target = await client.get_users(target.id)
+    except Exception:
+        pass
+
     name = get_name(target)
     username = f"@{target.username}" if target.username else "None"
     user_id = target.id
+    mention_link = f"[Click Here](tg://user?id={target.id})"
     
+    if target.is_bot:
+        bot_status = "Bot 🤖"
+    elif target.id == Config.OWNER_ID:
+        bot_status = "Bot Owner 👑"
+    elif await db.is_sizu_admin(target.id):
+        bot_status = "Sizu Admin 🛡️"
+    elif target.id in Config.SUDO_USERS:
+        bot_status = "Sudo User 🔑"
+    else:
+        bot_status = "User 👤"
+
+    premium_status = "Premium Status: Yes ✨" if target.is_premium else "Premium Status: No"
+    dc_id = f"DC ID: {target.dc_id}" if target.dc_id else "DC ID: Not Available"
+    phone_number = f"Phone Number: {target.phone_number}" if target.phone_number else "Phone Number: Not Available"
+
     text = (
-        f"Name: {name}\n"
-        f"Username: {username}\n"
-        f"ID: {user_id}"
+        f"👤 **User Information**\n\n"
+        f"• **Name:** {name}\n"
+        f"• **Username:** {username}\n"
+        f"• **User ID:** `{user_id}`\n"
+        f"• **Mention Link:** {mention_link}\n"
+        f"• **Bot Status:** {bot_status}\n"
+        f"• **Premium:** {premium_status}\n"
+        f"• **{dc_id}**\n"
+        f"• **{phone_number}**"
     )
     await message.reply(text)

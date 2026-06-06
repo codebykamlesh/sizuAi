@@ -72,10 +72,13 @@ async def command_router(client: Client, message: Message):
         
     except CommandPermissionError as pe:
         log.warning(f"Command Failure | User: {user_id} | Chat: {chat_id} | Command: {text} | Reason: Permission denied (Required: {cmd.permissions})")
-        await message.reply(
-            f"❌ You don't have permission to use this command.\n\n"
-            f"Required:\n{cmd.permissions}"
-        )
+        if pe.required_role == "Owner":
+            await message.reply("❌ Only the bot owner can use this command.")
+        else:
+            await message.reply(
+                f"❌ You don't have permission to use this command.\n\n"
+                f"Required:\n{cmd.permissions}"
+            )
     except CommandValidationError as ve:
         log.warning(f"Command Failure | User: {user_id} | Chat: {chat_id} | Command: {text} | Reason: Validation error ({str(ve)})")
         

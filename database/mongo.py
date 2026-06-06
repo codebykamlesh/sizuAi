@@ -33,6 +33,7 @@ class MemoryStore:
         self._rps_wins: dict[int, int] = {}
         self._coin_streak: dict[int, int] = {}
         self._max_coin_streak: dict[int, int] = {}
+        self._sizu_admins: set[int] = set()
 
     # Chat memory
     def save_message(self, chat_id: int, role: str, content: str, max_size: int) -> None:
@@ -69,6 +70,22 @@ class MemoryStore:
 
     def all_user_ids(self) -> list[int]:
         return list(self._users.keys())
+
+    # Sizu Admins
+    def add_sizu_admin(self, user_id: int) -> None:
+        self._sizu_admins.add(user_id)
+
+    def remove_sizu_admin(self, user_id: int) -> bool:
+        if user_id in self._sizu_admins:
+            self._sizu_admins.remove(user_id)
+            return True
+        return False
+
+    def is_sizu_admin(self, user_id: int) -> bool:
+        return user_id in self._sizu_admins
+
+    def get_sizu_admins(self) -> list[int]:
+        return list(self._sizu_admins)
 
     # Notes
     def save_note(self, chat_id: int, name: str, text: str) -> None:
@@ -203,6 +220,12 @@ class Database:
             await self._db.users.create_index("user_id", unique=True)
             await self._db.reminders.create_index("due_at")
             await self._db.notes.create_index([("chat_id", 1), ("name", 1)])
+            await self._db.sizu_admins.create_index("user_id", unique=True)
+
+            # Sync sizu admins to memory
+            cursor = self._db.sizu_admins.find({}, {"user_id": 1})
+            async for doc in cursor:
+                _mem.add_sizu_admin(doc["user_id"])
 
             log.info("MongoDB connected successfully")
         except Exception as e:
@@ -354,6 +377,49 @@ class Database:
             return [doc["user_id"] async for doc in cursor]
         except Exception:
             return _mem.all_user_ids()
+
+    # ── Sizu Admins ────────────────────────────────────────────────────────
+    async def add_sizu_admin(self, user_id: int) -> None:
+        _mem.add_sizu_admin(user_id)
+        if not self.is_connected:
+            return
+        try:
+            await self._db.sizu_admins.update_one(
+                {"user_id": user_id},
+                {"$set": {"user_id": user_id, "added_at": time.time()}},
+                upsert=True
+            )
+        except Exception as e:
+            log.debug(f"add_sizu_admin error: {e}")
+
+    async def remove_sizu_admin(self, user_id: int) -> bool:
+        mem_res = _mem.remove_sizu_admin(user_id)
+        if not self.is_connected:
+            return mem_res
+        try:
+            result = await self._db.sizu_admins.delete_one({"user_id": user_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log.debug(f"remove_sizu_admin error: {e}")
+            return mem_res
+
+    async def is_sizu_admin(self, user_id: int) -> bool:
+        if not self.is_connected:
+            return _mem.is_sizu_admin(user_id)
+        try:
+            doc = await self._db.sizu_admins.find_one({"user_id": user_id})
+            return doc is not None
+        except Exception:
+            return _mem.is_sizu_admin(user_id)
+
+    async def get_sizu_admins(self) -> list[int]:
+        if not self.is_connected:
+            return _mem.get_sizu_admins()
+        try:
+            cursor = self._db.sizu_admins.find({}, {"user_id": 1})
+            return [doc["user_id"] async for doc in cursor]
+        except Exception:
+            return _mem.get_sizu_admins()
 
     # ── Notes ─────────────────────────────────────────────────────────────
 

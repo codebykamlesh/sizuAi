@@ -1,8 +1,9 @@
 """
-Admin plugin — owner-only commands: stats, broadcast, plugin info.
+Admin & Moderation plugin — Sizu Admin management, invite system, and group moderation.
 """
 import asyncio
-from pyrogram import Client, filters
+import time
+from pyrogram import Client, enums
 from pyrogram.types import Message, ChatPermissions
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated
 
@@ -14,6 +15,119 @@ from utils.logger import setup_logger
 
 log = setup_logger("sizu.admin")
 
+
+# ── Helper for Bot Privileges Validation ──────────────────────────────────────
+
+async def validate_bot_moderation(client: Client, message: Message, required_privilege: str) -> bool:
+    """
+    Validate if command is used in a group, if the bot is admin, and if the bot has the required privilege.
+    Returns True if valid, otherwise replies with error and returns False.
+    """
+    if not (message.chat and message.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP)):
+        await message.reply("❌ This command can only be used in groups.")
+        return False
+        
+    try:
+        bot_member = await client.get_chat_member(message.chat.id, client.me.id)
+        if bot_member.status == enums.ChatMemberStatus.OWNER:
+            return True
+            
+        if bot_member.status != enums.ChatMemberStatus.ADMINISTRATOR:
+            await message.reply("❌ I don't have permission to perform this action. I need to be an administrator.")
+            return False
+            
+        if required_privilege == "can_restrict_members":
+            if not bot_member.privileges or not bot_member.privileges.can_restrict_members:
+                await message.reply("❌ I don't have permission to perform this action. I need the 'Restrict Members' permission.")
+                return False
+        elif required_privilege == "can_promote_members":
+            if not bot_member.privileges or not bot_member.privileges.can_promote_members:
+                await message.reply("❌ I don't have permission to perform this action. I need the 'Promote Members' permission.")
+                return False
+                
+        return True
+    except Exception as e:
+        await message.reply(f"❌ Failed to verify bot permissions: {e}")
+        return False
+
+
+# ── Sizu Admin Management (Owner Only) ────────────────────────────────────────
+
+@register_command(
+    name="addadmin",
+    description="Add a global Sizu Admin. Owner only.",
+    category="Admin",
+    syntax="/addadmin [@user/username]",
+    examples=["/addadmin @username", "/addadmin"],
+    permissions="Owner"
+)
+async def cmd_addadmin(client: Client, message: Message):
+    target = await get_target_user(client, message, default_to_sender=False)
+    if not target:
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/addadmin`\n\n"
+            "Or use:\n`/addadmin @username`"
+        )
+    
+    if await db.is_sizu_admin(target.id):
+        return await message.reply(f"ℹ️ {get_name(target)} is already a Sizu Admin.")
+        
+    await db.add_sizu_admin(target.id)
+    await message.reply(f"✅ **{get_name(target)}** has been added as a Sizu Admin!")
+
+
+@register_command(
+    name="removeadmin",
+    description="Remove a global Sizu Admin. Owner only.",
+    category="Admin",
+    syntax="/removeadmin [@user/username]",
+    examples=["/removeadmin @username", "/removeadmin"],
+    permissions="Owner"
+)
+async def cmd_removeadmin(client: Client, message: Message):
+    target = await get_target_user(client, message, default_to_sender=False)
+    if not target:
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/removeadmin`\n\n"
+            "Or use:\n`/removeadmin @username`"
+        )
+    
+    removed = await db.remove_sizu_admin(target.id)
+    if removed:
+        await message.reply(f"✅ **{get_name(target)}** has been removed from Sizu Admins.")
+    else:
+        await message.reply(f"❌ **{get_name(target)}** is not a Sizu Admin.")
+
+
+@register_command(
+    name="admins",
+    description="List all Sizu Admins. Owner only.",
+    category="Admin",
+    syntax="/admins",
+    examples=["/admins"],
+    permissions="Owner"
+)
+async def cmd_admins(client: Client, message: Message):
+    admin_ids = await db.get_sizu_admins()
+    if not admin_ids:
+        return await message.reply("There are no Sizu Admins registered yet.")
+        
+    lines = ["👥 **Sizu Global Admins**\n"]
+    for i, uid in enumerate(admin_ids, 1):
+        try:
+            user = await client.get_users(uid)
+            name = get_name(user)
+            username = f" (@{user.username})" if user.username else ""
+            lines.append(f"{i}. **{name}**{username} (`{uid}`)")
+        except Exception:
+            lines.append(f"{i}. **User ID:** `{uid}`")
+            
+    await message.reply("\n".join(lines))
+
+
+# ── Global Bot Admin Commands (Sudo/Sizu Admin) ───────────────────────────────
 
 @register_command(
     name="stats",
@@ -28,7 +142,15 @@ async def cmd_stats(client: Client, message: Message):
     if not target:
         return await message.reply("❌ No target user found.")
 
-    is_sudo = (message.from_user and (message.from_user.id == Config.OWNER_ID or message.from_user.id in Config.SUDO_USERS))
+    is_sizu_admin = False
+    if message.from_user:
+        is_sizu_admin = await db.is_sizu_admin(message.from_user.id)
+
+    is_sudo = (message.from_user and (
+        message.from_user.id == Config.OWNER_ID or 
+        message.from_user.id in Config.SUDO_USERS or 
+        is_sizu_admin
+    ))
     has_target = (message.reply_to_message or (len(message.command) > 1))
 
     if is_sudo and not has_target:
@@ -70,7 +192,7 @@ async def cmd_stats(client: Client, message: Message):
     category="Admin",
     syntax="/broadcast",
     examples=["/broadcast"],
-    permissions="Owner"
+    permissions="Sudo"
 )
 async def cmd_broadcast(client: Client, message: Message):
     """Broadcast a message to all registered users."""
@@ -116,7 +238,7 @@ async def cmd_broadcast(client: Client, message: Message):
     category="Admin",
     syntax="/cleardb <chat_id>",
     examples=["/cleardb -100123456789"],
-    permissions="Owner",
+    permissions="Sudo",
     required_args=1
 )
 async def cmd_cleardb(client: Client, message: Message):
@@ -129,26 +251,56 @@ async def cmd_cleardb(client: Client, message: Message):
     await message.reply(f"✅ Cleared memory for chat `{chat_id}`")
 
 
-@register_command(
-    name="getid",
-    description="Get the chat/user ID.",
-    category="General",
-    syntax="/getid",
-    examples=["/getid"],
-    permissions="Sudo",
-    is_hidden=True
-)
-async def cmd_getid(client: Client, message: Message):
-    """Get the chat/user ID."""
-    if message.reply_to_message and message.reply_to_message.from_user:
-        u = message.reply_to_message.from_user
-        await message.reply(f"👤 `{u.id}` — **{u.first_name}**")
-    else:
-        await message.reply(
-            f"💬 Chat: `{message.chat.id}`\n"
-            f"👤 You: `{message.from_user.id if message.from_user else 'N/A'}`"
-        )
+# ── Group Invite System ───────────────────────────────────────────────────────
 
+@register_command(
+    name="add",
+    description="Invite a user to the group.",
+    category="Admin",
+    syntax="/add <@username/username>",
+    examples=["/add @username"],
+    permissions="Admin",
+    required_args=1
+)
+async def cmd_add(client: Client, message: Message):
+    if not (message.chat and message.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP)):
+        return await message.reply("❌ This command can only be used in groups.")
+
+    # Validate bot invite permissions
+    try:
+        bot_member = await client.get_chat_member(message.chat.id, client.me.id)
+        if bot_member.status == enums.ChatMemberStatus.OWNER:
+            pass
+        elif bot_member.status != enums.ChatMemberStatus.ADMINISTRATOR:
+            return await message.reply("❌ I need to be an administrator to invite users.")
+        elif not bot_member.privileges or not bot_member.privileges.can_invite_users:
+            return await message.reply("❌ I don't have permission to perform this action. I need the 'Invite Users' permission.")
+    except Exception as e:
+        return await message.reply(f"❌ Failed to verify bot permissions: {e}")
+
+    # Resolve target user
+    target = await get_target_user(client, message, default_to_sender=False)
+    if not target:
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\n`/add @username`\n\n"
+            "Or reply to their message:\n`/add`"
+        )
+        
+    try:
+        await client.add_chat_members(message.chat.id, target.id)
+        await message.reply(f"✅ **{get_name(target)}** has been invited and added to this group!")
+    except Exception as e:
+        err_msg = str(e)
+        if "USER_PRIVACY_RESTRICTED" in err_msg:
+            await message.reply(f"❌ Failed to add **{get_name(target)}**: Their privacy settings restrict who can add them to groups.")
+        elif "USER_ALREADY_PARTICIPANT" in err_msg:
+            await message.reply(f"❌ **{get_name(target)}** is already a participant of this group.")
+        else:
+            await message.reply(f"❌ Failed to add user: {err_msg}")
+
+
+# ── Group Moderation Commands (Admin/Sizu Admin/Sudo/Owner) ───────────────────
 
 @register_command(
     name="warn",
@@ -159,13 +311,12 @@ async def cmd_getid(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_warn(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/warn`\n\n"
-            "Or use:\n`/warn @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     warn_count = await db.warn_user(target.id)
     target_name = get_name(target)
@@ -189,13 +340,12 @@ async def cmd_warn(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_mute(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/mute`\n\n"
-            "Or use:\n`/mute @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.restrict_chat_member(
@@ -217,13 +367,12 @@ async def cmd_mute(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_unmute(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/unmute`\n\n"
-            "Or use:\n`/unmute @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.restrict_chat_member(
@@ -250,13 +399,12 @@ async def cmd_unmute(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_ban(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/ban`\n\n"
-            "Or use:\n`/ban @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.ban_chat_member(message.chat.id, target.id)
@@ -274,13 +422,12 @@ async def cmd_ban(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_unban(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/unban`\n\n"
-            "Or use:\n`/unban @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.unban_chat_member(message.chat.id, target.id)
@@ -298,13 +445,12 @@ async def cmd_unban(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_kick(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_restrict_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/kick`\n\n"
-            "Or use:\n`/kick @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.ban_chat_member(message.chat.id, target.id)
@@ -323,13 +469,12 @@ async def cmd_kick(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_promote(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_promote_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/promote`\n\n"
-            "Or use:\n`/promote @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.promote_chat_member(
@@ -359,13 +504,12 @@ async def cmd_promote(client: Client, message: Message):
     permissions="Admin"
 )
 async def cmd_demote(client: Client, message: Message):
-    target = await get_target_user(client, message, default_to_sender=False)
+    if not await validate_bot_moderation(client, message, "can_promote_members"):
+        return
+
+    target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/demote`\n\n"
-            "Or use:\n`/demote @username`"
-        )
+        return await message.reply("❌ No target user found.")
     
     try:
         await client.promote_chat_member(

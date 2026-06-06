@@ -57,18 +57,9 @@ def handle_abusive_language(text: str) -> Optional[str]:
     """Detect Hindi/English gaali/abusive language and return a playful response."""
     text_lower = text.lower()
 
-    # Specific patterns
-    if re.search(r"\bchut(i)?ya(e)?\b", text_lower):
-        return "Aree itni gaali kyun 😭 chai peete hain aur shaant hote hain."
-    if re.search(r"\bmadarchod\b|\bmaderchod\b|\bmc\b", text_lower):
-        return "Kitni gaali deta hai yaar 😂 thoda tameez bhi rakho."
-    if re.search(r"\bbakwas\s*(bot)?\b", text_lower):
-        return "Accha ji 😏 phir bhi baat karne aa hi gaye."
-    if re.search(r"\bgandu\b", text_lower):
-        return "Aaj mood thoda kharab lag raha hai 😂"
-
-    # General list of other abusive words
-    other_abusive_patterns = [
+    abusive_patterns = [
+        r"\bchut(i)?ya(e)?\b",
+        r"\bmadarchod\b|\bmaderchod\b|\bmc\b",
         r"\bbe(h)?enchod\b",
         r"\bbc\b",
         r"\bbhadwa\b",
@@ -81,14 +72,18 @@ def handle_abusive_language(text: str) -> Optional[str]:
         r"\bkamina\b",
         r"\bkamine\b",
         r"\bchut\b",
+        r"\bgandu\b",
+        r"\bsala\b",
+        r"\bsale\b",
     ]
 
-    if any(re.search(pat, text_lower) for pat in other_abusive_patterns):
+    if any(re.search(pat, text_lower) for pat in abusive_patterns):
         return random.choice([
-            "Aree itni gaali kyun 😭 chai peete hain aur shaant hote hain.",
-            "Kitni gaali deta hai yaar 😂 thoda tameez bhi rakho.",
-            "Accha ji 😏 phir bhi baat karne aa hi gaye.",
-            "Aaj mood thoda kharab lag raha hai 😂",
+            "Kitni gaali deta hai yaar 😂",
+            "Arre arre, shaant ho jao 😭",
+            "Aaj mood off lag raha hai 😏",
+            "Kitni gaali doge yaar, thoda shaant ho jao 🤧",
+            "Aree arre, chill karo, gaali dene ki kya zaroorat hai ❤️"
         ])
 
     return None

@@ -77,25 +77,27 @@ class CommandRegistry:
         if perm == "Owner":
             raise CommandPermissionError("Owner")
             
+        from database.mongo import db
+        is_sizu_admin = await db.is_sizu_admin(user_id)
+
         if perm == "Sudo":
-            if user_id not in Config.SUDO_USERS:
-                raise CommandPermissionError("Sudo")
-            return True
+            if user_id in Config.SUDO_USERS or is_sizu_admin:
+                return True
+            raise CommandPermissionError("Sudo")
             
         if perm == "Admin":
-            # Check owner/sudo first
-            if user_id in Config.SUDO_USERS:
+            # Check owner/sudo/Sizu Admin first
+            if user_id in Config.SUDO_USERS or is_sizu_admin:
                 return True
             # Check group admin status
             if message.chat and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
                 try:
                     member = await client.get_chat_member(message.chat.id, user_id)
-                    if member.status not in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
-                        raise CommandPermissionError("Admin")
+                    if member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
+                        return True
                 except Exception:
-                    raise CommandPermissionError("Admin")
-            else:
-                raise CommandPermissionError("Admin")
+                    pass
+            raise CommandPermissionError("Admin")
                 
         return True
 
