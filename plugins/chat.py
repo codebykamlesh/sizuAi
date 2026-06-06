@@ -69,6 +69,16 @@ async def private_chat(client: Client, message: Message):
         return
 
     chat_id = message.chat.id
+
+    # Intercept active games (puzzle or guess) to bypass AI processing
+    puzzle_state = await db.get_game_state(chat_id, "puzzles")
+    if puzzle_state and puzzle_state.get("active"):
+        return
+        
+    guess_state = await db.get_game_state(chat_id, "guess")
+    if guess_state and guess_state.get("active"):
+        return
+
     user_id = user.id
     user_input = message.text.strip()
 
@@ -134,6 +144,16 @@ async def group_chat(client: Client, message: Message):
         return
 
     chat_id = message.chat.id
+
+    # Intercept active games (puzzle or guess) to bypass AI processing
+    puzzle_state = await db.get_game_state(chat_id, "puzzles")
+    if puzzle_state and puzzle_state.get("active"):
+        return
+        
+    guess_state = await db.get_game_state(chat_id, "guess")
+    if guess_state and guess_state.get("active"):
+        return
+
     user_id = user.id
     user_input = message.text.strip()
 

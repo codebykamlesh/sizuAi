@@ -1,6 +1,6 @@
 """
 Auto reactions plugin — reacts to messages with relevant emojis.
-Lightweight: fires for ~20% of messages in groups to stay non-spammy.
+Lightweight: fires for ~15% of messages in groups to stay non-spammy.
 """
 import random
 
@@ -14,6 +14,7 @@ from pyrogram.errors import (
     BadRequest,
 )
 
+from database.mongo import db
 from utils.logger import setup_logger
 
 log = setup_logger("sizu.reactions")
@@ -37,11 +38,21 @@ def pick_emoji(text: str) -> str:
     return random.choice(ALL_REACT)
 
 
-@Client.on_message(filters.group & ~filters.bot, group=2)
+@Client.on_message(filters.group & ~filters.bot, group=10)
 async def auto_react(client: Client, message: Message):
-    """React to ~15% of group messages."""
+    """React to ~15% of group messages. Skips if a game is active."""
     if not message.text or not message.from_user:
         return
+
+    # Skip reactions during active games to avoid noise
+    chat_id = message.chat.id
+    puzzle_state = await db.get_game_state(chat_id, "puzzles")
+    if puzzle_state and puzzle_state.get("active"):
+        return
+    guess_state = await db.get_game_state(chat_id, "guess")
+    if guess_state and guess_state.get("active"):
+        return
+
     # Only react 15% of the time
     if random.random() > 0.15:
         return

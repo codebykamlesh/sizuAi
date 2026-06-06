@@ -1,6 +1,6 @@
 """
 Fun plugin — roast, compliment, quote, ship, iq, hack, rizz.
-All AI-powered with natural, non-repetitive outputs.
+All using curated local content pools for instant, reliable responses.
 """
 import asyncio
 import random
@@ -8,12 +8,10 @@ import random
 from pyrogram import Client, enums
 from pyrogram.types import Message
 
-from core.ai_engine import sizu_ai
 from core.commands import register_command
 from utils.helpers import (
-    get_name, random_quote,
-    random_roast_prompt, random_compliment_prompt,
-    get_target_user,
+    get_name, random_quote, random_compliment, random_roast,
+    get_target_user, handle_bot_target,
 )
 from utils.logger import setup_logger
 
@@ -53,7 +51,8 @@ async def cmd_ship(client: Client, message: Message):
             "Usage:\nReply to a user's message:\n`/ship`\n\n"
             "Or use:\n`/ship @username`"
         )
-    if not user1:
+
+    if await handle_bot_target(client, message, user2):
         return
 
     name1 = get_name(user1)
@@ -101,6 +100,10 @@ async def cmd_iq(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
+
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     iq = random.randint(40, 200)
     comment = iq_comment(iq)
@@ -138,6 +141,10 @@ async def cmd_hack(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
+
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     msg = await message.reply(f"💻 **Hacking {name}...**\n\n```\nInitializing...```")
     await asyncio.sleep(1)
@@ -168,7 +175,7 @@ async def cmd_hack(client: Client, message: Message):
     )
 
 
-# ── Roast ─────────────────────────────────────────────────────────────────────
+# ── Roast (Local Pool — Instant, No AI) ──────────────────────────────────────
 
 @register_command(
     name="roast",
@@ -181,19 +188,15 @@ async def cmd_roast(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
-    name = get_name(target)
 
-    try:
-        await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
-    except Exception:
-        pass
+    if await handle_bot_target(client, message, target):
+        return
 
-    prompt = random_roast_prompt(name)
-    roast = await sizu_ai.get_quick_response(prompt, max_tokens=120)
+    roast = random_roast(get_name(target))
     await message.reply(f"🔥 {roast}")
 
 
-# ── Compliment ────────────────────────────────────────────────────────────────
+# ── Compliment (Local Pool — Instant, No AI) ─────────────────────────────────
 
 @register_command(
     name="compliment",
@@ -206,15 +209,11 @@ async def cmd_compliment(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
-    name = get_name(target)
 
-    try:
-        await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
-    except Exception:
-        pass
+    if await handle_bot_target(client, message, target):
+        return
 
-    prompt = random_compliment_prompt(name)
-    comp = await sizu_ai.get_quick_response(prompt, max_tokens=120)
+    comp = random_compliment(get_name(target))
     await message.reply(f"🌸 {comp}")
 
 
@@ -255,6 +254,10 @@ async def cmd_rizz(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
+
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     score = random.randint(0, 100)
     comment = "unknown rizz"

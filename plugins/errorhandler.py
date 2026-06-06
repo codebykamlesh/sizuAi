@@ -1,13 +1,11 @@
 """
-Global error handler + anti-spam middleware plugin.
+Global error handler plugin.
 Catches unhandled exceptions across all handlers.
 """
 import asyncio
-import traceback
 
 from pyrogram import Client
 from pyrogram.errors import FloodWait
-from pyrogram.handlers import MessageHandler
 
 from utils.logger import setup_logger
 
@@ -24,7 +22,4 @@ async def global_error_handler(client: Client, update, exc: Exception) -> None:
     if isinstance(exc, asyncio.CancelledError):
         return
 
-    log.error(
-        f"Unhandled exception in handler:\n"
-        f"{''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))}"
-    )
+    log.error(f"Unhandled exception in handler: {type(exc).__name__}: {exc}", exc_info=True)

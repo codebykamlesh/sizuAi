@@ -21,15 +21,11 @@ class MemoryStore:
 
     def __init__(self):
         self._memory: dict[int, list[dict]] = defaultdict(list)       # chat_id -> messages
-        self._afk: dict[int, dict] = {}                                # user_id -> afk data
         self._users: dict[int, dict] = {}                              # user_id -> user data
-        self._notes: dict[str, dict] = {}                              # "chat_id:name" -> note
-        self._reminders: list[dict] = []                               # list of reminder dicts
         self._welcome: dict[int, str] = {}                             # chat_id -> welcome text
         self._game_stats: dict[int, dict] = defaultdict(dict)          # user_id -> stats
         self._game_states: dict[str, dict] = {}                        # "chat_id:game_type" -> state
-        self._trivia_points: dict[int, int] = {}
-        self._wordchain_points: dict[int, int] = {}
+        self._puzzles_points: dict[int, int] = {}
         self._rps_wins: dict[int, int] = {}
         self._coin_streak: dict[int, int] = {}
         self._max_coin_streak: dict[int, int] = {}
@@ -46,17 +42,6 @@ class MemoryStore:
 
     def clear_history(self, chat_id: int) -> None:
         self._memory.pop(chat_id, None)
-
-    # AFK
-    def set_afk(self, user_id: int, reason: str) -> None:
-        self._afk[user_id] = {"afk": True, "reason": reason, "time": time.time()}
-
-    def get_afk(self, user_id: int) -> Optional[dict]:
-        return self._afk.get(user_id) if self._afk.get(user_id, {}).get("afk") else None
-
-    def remove_afk(self, user_id: int) -> None:
-        if user_id in self._afk:
-            self._afk[user_id]["afk"] = False
 
     # Users
     def upsert_user(self, user_id: int, data: dict) -> None:
@@ -87,38 +72,6 @@ class MemoryStore:
     def get_sizu_admins(self) -> list[int]:
         return list(self._sizu_admins)
 
-    # Notes
-    def save_note(self, chat_id: int, name: str, text: str) -> None:
-        key = f"{chat_id}:{name.lower()}"
-        self._notes[key] = {"chat_id": chat_id, "name": name.lower(), "text": text}
-
-    def get_note(self, chat_id: int, name: str) -> Optional[dict]:
-        return self._notes.get(f"{chat_id}:{name.lower()}")
-
-    def delete_note(self, chat_id: int, name: str) -> bool:
-        key = f"{chat_id}:{name.lower()}"
-        if key in self._notes:
-            del self._notes[key]
-            return True
-        return False
-
-    def list_notes(self, chat_id: int) -> list[str]:
-        prefix = f"{chat_id}:"
-        return [k[len(prefix):] for k in self._notes if k.startswith(prefix)]
-
-    # Reminders
-    def add_reminder(self, data: dict) -> None:
-        self._reminders.append(data)
-
-    def get_due_reminders(self) -> list[dict]:
-        now = time.time()
-        due = [r for r in self._reminders if r.get("due_at", 0) <= now]
-        self._reminders = [r for r in self._reminders if r.get("due_at", 0) > now]
-        return due
-
-    def list_reminders(self, user_id: int) -> list[dict]:
-        return [r for r in self._reminders if r.get("user_id") == user_id]
-
     # Welcome
     def set_welcome(self, chat_id: int, text: str) -> None:
         self._welcome[chat_id] = text
@@ -147,14 +100,14 @@ class MemoryStore:
         self._game_states.pop(f"{chat_id}:{game_type}", None)
 
     # Game Scores
-    def add_trivia_points(self, user_id: int, points: int) -> None:
-        self._trivia_points[user_id] = self._trivia_points.get(user_id, 0) + points
+    def add_puzzles_points(self, user_id: int, points: int) -> None:
+        self._puzzles_points[user_id] = self._puzzles_points.get(user_id, 0) + points
 
-    def get_trivia_points(self, user_id: int) -> int:
-        return self._trivia_points.get(user_id, 0)
+    def get_puzzles_points(self, user_id: int) -> int:
+        return self._puzzles_points.get(user_id, 0)
 
-    def get_trivia_top(self, limit: int) -> list[dict]:
-        sorted_users = sorted(self._trivia_points.items(), key=lambda x: x[1], reverse=True)[:limit]
+    def get_puzzles_top(self, limit: int) -> list[dict]:
+        sorted_users = sorted(self._puzzles_points.items(), key=lambda x: x[1], reverse=True)[:limit]
         res = []
         for uid, pts in sorted_users:
             user_data = self.get_user(uid)
@@ -162,12 +115,9 @@ class MemoryStore:
                 "user_id": uid,
                 "first_name": user_data.get("first_name", "Someone"),
                 "username": user_data.get("username", ""),
-                "trivia_points": pts
+                "puzzles_points": pts
             })
         return res
-
-    def add_wordchain_points(self, user_id: int, points: int) -> None:
-        self._wordchain_points[user_id] = self._wordchain_points.get(user_id, 0) + points
 
     def increment_rps_wins(self, user_id: int) -> None:
         self._rps_wins[user_id] = self._rps_wins.get(user_id, 0) + 1
@@ -218,8 +168,6 @@ class Database:
             # Create indexes
             await self._db.memory.create_index("chat_id")
             await self._db.users.create_index("user_id", unique=True)
-            await self._db.reminders.create_index("due_at")
-            await self._db.notes.create_index([("chat_id", 1), ("name", 1)])
             await self._db.sizu_admins.create_index("user_id", unique=True)
 
             # Sync sizu admins to memory
@@ -279,42 +227,6 @@ class Database:
             return await self._db.memory.count_documents({})
         except Exception:
             return len(_mem._memory)
-
-    # ── AFK ───────────────────────────────────────────────────────────────
-
-    async def set_afk(self, user_id: int, reason: str = "") -> None:
-        _mem.set_afk(user_id, reason)
-        if not self.is_connected:
-            return
-        try:
-            await self._db.users.update_one(
-                {"user_id": user_id},
-                {"$set": {"afk": True, "afk_reason": reason, "afk_time": time.time()}},
-                upsert=True,
-            )
-        except Exception as e:
-            log.debug(f"set_afk error: {e}")
-
-    async def check_afk(self, user_id: int) -> Optional[dict]:
-        if not self.is_connected:
-            return _mem.get_afk(user_id)
-        try:
-            doc = await self._db.users.find_one({"user_id": user_id, "afk": True})
-            return doc
-        except Exception:
-            return _mem.get_afk(user_id)
-
-    async def remove_afk(self, user_id: int) -> None:
-        _mem.remove_afk(user_id)
-        if not self.is_connected:
-            return
-        try:
-            await self._db.users.update_one(
-                {"user_id": user_id},
-                {"$set": {"afk": False}},
-            )
-        except Exception as e:
-            log.debug(f"remove_afk error: {e}")
 
     # ── Users ─────────────────────────────────────────────────────────────
 
@@ -421,89 +333,6 @@ class Database:
         except Exception:
             return _mem.get_sizu_admins()
 
-    # ── Notes ─────────────────────────────────────────────────────────────
-
-    async def save_note(self, chat_id: int, name: str, text: str) -> None:
-        _mem.save_note(chat_id, name, text)
-        if not self.is_connected:
-            return
-        try:
-            await self._db.notes.update_one(
-                {"chat_id": chat_id, "name": name.lower()},
-                {"$set": {"text": text}},
-                upsert=True,
-            )
-        except Exception as e:
-            log.debug(f"save_note error: {e}")
-
-    async def get_note(self, chat_id: int, name: str) -> Optional[dict]:
-        if not self.is_connected:
-            return _mem.get_note(chat_id, name)
-        try:
-            return await self._db.notes.find_one({"chat_id": chat_id, "name": name.lower()})
-        except Exception:
-            return _mem.get_note(chat_id, name)
-
-    async def delete_note(self, chat_id: int, name: str) -> bool:
-        _mem.delete_note(chat_id, name)
-        if not self.is_connected:
-            return True
-        try:
-            result = await self._db.notes.delete_one({"chat_id": chat_id, "name": name.lower()})
-            return result.deleted_count > 0
-        except Exception:
-            return False
-
-    async def list_notes(self, chat_id: int) -> list[str]:
-        if not self.is_connected:
-            return _mem.list_notes(chat_id)
-        try:
-            cursor = self._db.notes.find({"chat_id": chat_id}, {"name": 1})
-            return [doc["name"] async for doc in cursor]
-        except Exception:
-            return _mem.list_notes(chat_id)
-
-    # ── Reminders ─────────────────────────────────────────────────────────
-
-    async def add_reminder(self, user_id: int, chat_id: int, text: str, due_at: float) -> None:
-        data = {
-            "user_id": user_id,
-            "chat_id": chat_id,
-            "text": text,
-            "due_at": due_at,
-            "created_at": time.time(),
-        }
-        _mem.add_reminder(data)
-        if not self.is_connected:
-            return
-        try:
-            await self._db.reminders.insert_one(data)
-        except Exception as e:
-            log.debug(f"add_reminder error: {e}")
-
-    async def get_due_reminders(self) -> list[dict]:
-        if not self.is_connected:
-            return _mem.get_due_reminders()
-        try:
-            now = time.time()
-            cursor = self._db.reminders.find({"due_at": {"$lte": now}})
-            due = [doc async for doc in cursor]
-            if due:
-                ids = [d["_id"] for d in due]
-                await self._db.reminders.delete_many({"_id": {"$in": ids}})
-            return due
-        except Exception:
-            return _mem.get_due_reminders()
-
-    async def list_reminders(self, user_id: int) -> list[dict]:
-        if not self.is_connected:
-            return _mem.list_reminders(user_id)
-        try:
-            cursor = self._db.reminders.find({"user_id": user_id})
-            return [doc async for doc in cursor]
-        except Exception:
-            return _mem.list_reminders(user_id)
-
     # ── Welcome ───────────────────────────────────────────────────────────
 
     async def set_welcome(self, chat_id: int, text: str) -> None:
@@ -587,48 +416,35 @@ class Database:
 
     # ── Game Scores Persistence ───────────────────────────────────────────
 
-    async def add_trivia_points(self, user_id: int, first_name: str, username: str, points: int) -> None:
+    async def add_puzzles_points(self, user_id: int, first_name: str, username: str, points: int) -> None:
         await self.upsert_user(user_id, first_name, username)
-        _mem.add_trivia_points(user_id, points)
+        _mem.add_puzzles_points(user_id, points)
         if not self.is_connected:
             return
         try:
             await self._db.users.update_one(
                 {"user_id": user_id},
-                {"$inc": {"trivia_points": points}}
+                {"$inc": {"puzzles_points": points}}
             )
         except Exception as e:
-            log.debug(f"add_trivia_points error: {e}")
+            log.debug(f"add_puzzles_points error: {e}")
 
-    async def get_trivia_top(self, limit: int = 10) -> list[dict]:
+    async def get_puzzles_top(self, limit: int = 10) -> list[dict]:
         if not self.is_connected:
-            return _mem.get_trivia_top(limit)
+            return _mem.get_puzzles_top(limit)
         try:
-            cursor = self._db.users.find({"trivia_points": {"$gt": 0}}).sort("trivia_points", -1).limit(limit)
+            cursor = self._db.users.find({"puzzles_points": {"$gt": 0}}).sort("puzzles_points", -1).limit(limit)
             return [
                 {
                     "user_id": doc["user_id"],
                     "first_name": doc.get("first_name", "Someone"),
                     "username": doc.get("username", ""),
-                    "trivia_points": doc.get("trivia_points", 0)
+                    "puzzles_points": doc.get("puzzles_points", 0)
                 }
                 async for doc in cursor
             ]
         except Exception:
-            return _mem.get_trivia_top(limit)
-
-    async def add_wordchain_points(self, user_id: int, first_name: str, username: str, points: int) -> None:
-        await self.upsert_user(user_id, first_name, username)
-        _mem.add_wordchain_points(user_id, points)
-        if not self.is_connected:
-            return
-        try:
-            await self._db.users.update_one(
-                {"user_id": user_id},
-                {"$inc": {"wordchain_points": points}}
-            )
-        except Exception as e:
-            log.debug(f"add_wordchain_points error: {e}")
+            return _mem.get_puzzles_top(limit)
 
     async def increment_rps_wins(self, user_id: int, first_name: str, username: str) -> None:
         await self.upsert_user(user_id, first_name, username)
@@ -677,8 +493,7 @@ class Database:
     async def get_user_profile_stats(self, user_id: int) -> dict:
         if not self.is_connected:
             return {
-                "trivia_points": _mem._trivia_points.get(user_id, 0),
-                "wordchain_points": _mem._wordchain_points.get(user_id, 0),
+                "puzzles_points": _mem._puzzles_points.get(user_id, 0),
                 "rps_wins": _mem._rps_wins.get(user_id, 0),
                 "coin_streak": _mem._coin_streak.get(user_id, 0),
                 "max_coin_streak": _mem._max_coin_streak.get(user_id, 0),
@@ -686,16 +501,14 @@ class Database:
         try:
             doc = await self._db.users.find_one({"user_id": user_id}) or {}
             return {
-                "trivia_points": doc.get("trivia_points", 0),
-                "wordchain_points": doc.get("wordchain_points", 0),
+                "puzzles_points": doc.get("puzzles_points", 0),
                 "rps_wins": doc.get("rps_wins", 0),
                 "coin_streak": doc.get("coin_streak", 0),
                 "max_coin_streak": doc.get("max_coin_streak", 0),
             }
         except Exception:
             return {
-                "trivia_points": 0,
-                "wordchain_points": 0,
+                "puzzles_points": 0,
                 "rps_wins": 0,
                 "coin_streak": 0,
                 "max_coin_streak": 0,

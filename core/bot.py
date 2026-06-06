@@ -2,13 +2,9 @@
 Sizu AI Bot — Core Bot Class
 """
 import asyncio
-import importlib
-import os
-import pkgutil
 import time
-from pathlib import Path
 
-from pyrogram import Client, enums, idle
+from pyrogram import Client, enums
 from pyrogram.errors import FloodWait
 
 from config import Config
@@ -23,8 +19,7 @@ BANNER = """
 ║         ✨  S I Z U  A I  B O T  ✨       ║
 ║                  v{version}                    ║
 ╠═══════════════════════════════════════════╣
-║  Telegram AI · Powered by DeepSeek        ║
-║  Deployed on Render · Built with ❤️        ║
+║  Telegram AI · Built with ❤️               ║
 ╚═══════════════════════════════════════════╝
 """.format(version=Config.BOT_VERSION)
 
@@ -61,7 +56,19 @@ class SizuBot(Client):
 
         log.info(f"Bot: @{self.me.username} ({self.me.id})")
         log.info(f"Owner: {Config.OWNER_ID}")
-        log.info(f"AI Model: {Config.AI_MODEL}")
+        
+        # AI Provider validation & startup logs
+        if Config.AI_PROVIDER == "gemini":
+            if not Config.GEMINI_API_KEY:
+                log.warning("⚠️ GEMINI_API_KEY is not set. Falling back to OpenRouter providers.")
+            log.info("AI Provider: Gemini")
+            log.info(f"Model: {Config.GEMINI_MODEL}")
+        else:
+            log.info("AI Provider: OpenRouter")
+            
+        fallbacks_count = sum(1 for m in [Config.FALLBACK_MODEL_1, Config.FALLBACK_MODEL_2, Config.FALLBACK_MODEL_3] if m)
+        log.info(f"Fallbacks Loaded: {fallbacks_count}")
+        
         log.info(f"Plugins loaded: {self._count_plugins()} handlers")
 
         # Register Bot Commands
@@ -78,7 +85,7 @@ class SizuBot(Client):
                 Config.OWNER_ID,
                 f"✨ **Sizu is Online!**\n\n"
                 f"**Version:** `{Config.BOT_VERSION}`\n"
-                f"**Model:** `{Config.AI_MODEL}`\n"
+                f"**AI Engine:** `Active`\n"
                 f"**DB:** `{'MongoDB ✅' if db.is_connected else 'Memory ⚠️'}`\n\n"
                 f"_All systems nominal. Let's go! 🚀_",
             )

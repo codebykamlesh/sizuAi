@@ -10,7 +10,7 @@ from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated
 from config import Config
 from database.mongo import db
 from core.commands import register_command, CommandValidationError
-from utils.helpers import get_target_user, get_name
+from utils.helpers import get_target_user, get_name, handle_bot_target
 from utils.logger import setup_logger
 
 log = setup_logger("sizu.admin")
@@ -164,19 +164,21 @@ async def cmd_stats(client: Client, message: Message):
                 f"👤 **Users:** `{user_count}`\n"
                 f"🧠 **Memory chats:** `{mem_count}`\n"
                 f"🗄️ **Database:** `{db_status}`\n"
-                f"🤖 **Model:** `{Config.AI_MODEL}`\n"
+                f"🤖 **AI Engine:** `Active`\n"
                 f"🌡️ **Temperature:** `{Config.AI_TEMPERATURE}`"
             )
         except Exception as e:
             await msg.edit(f"Error fetching stats: `{e}`")
     else:
+        if await handle_bot_target(client, message, target):
+            return
+
         name = get_name(target)
         try:
             stats = await db.get_user_profile_stats(target.id)
             text = (
                 f"📊 **Game Stats for {name}**\n\n"
-                f"🏆 **Trivia Points:** `{stats.get('trivia_points', 0)}`\n"
-                f"🔗 **Wordchain Points:** `{stats.get('wordchain_points', 0)}`\n"
+                f"🏆 **Puzzles Points:** `{stats.get('puzzles_points', 0)}`\n"
                 f"✂️ **RPS Wins:** `{stats.get('rps_wins', 0)}`\n"
                 f"🔥 **Coin Streak:** `{stats.get('coin_streak', 0)}`\n"
                 f"📈 **Max Coin Streak:** `{stats.get('max_coin_streak', 0)}`"
@@ -314,9 +316,17 @@ async def cmd_warn(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/warn`\n\n"
+            "Or use:\n`/warn @username`"
+        )
+
+    # Protect bot from self-targeting
+    if target.id == client.me.id:
+        return await message.reply("Nice try, but I can't warn myself 😏")
     
     warn_count = await db.warn_user(target.id)
     target_name = get_name(target)
@@ -343,9 +353,16 @@ async def cmd_mute(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/mute`\n\n"
+            "Or use:\n`/mute @username`"
+        )
+
+    if target.id == client.me.id:
+        return await message.reply("Mute me? Bold move 😂")
     
     try:
         await client.restrict_chat_member(
@@ -370,9 +387,13 @@ async def cmd_unmute(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/unmute`\n\n"
+            "Or use:\n`/unmute @username`"
+        )
     
     try:
         await client.restrict_chat_member(
@@ -402,9 +423,16 @@ async def cmd_ban(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/ban`\n\n"
+            "Or use:\n`/ban @username`"
+        )
+
+    if target.id == client.me.id:
+        return await message.reply("Ban me? That's a whole mood 😂")
     
     try:
         await client.ban_chat_member(message.chat.id, target.id)
@@ -425,9 +453,13 @@ async def cmd_unban(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/unban`\n\n"
+            "Or use:\n`/unban @username`"
+        )
     
     try:
         await client.unban_chat_member(message.chat.id, target.id)
@@ -448,14 +480,21 @@ async def cmd_kick(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_restrict_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/kick`\n\n"
+            "Or use:\n`/kick @username`"
+        )
+
+    if target.id == client.me.id:
+        return await message.reply("Kick me? I'll remember this 😏")
     
     try:
         await client.ban_chat_member(message.chat.id, target.id)
         await client.unban_chat_member(message.chat.id, target.id)
-        await message.reply(f"🫵 **{get_name(target)} has been kicked.**")
+        await message.reply(f"🫥 **{get_name(target)} has been kicked.**")
     except Exception as e:
         await message.reply(f"❌ Failed to kick user: {e}")
 
@@ -472,9 +511,13 @@ async def cmd_promote(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_promote_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/promote`\n\n"
+            "Or use:\n`/promote @username`"
+        )
     
     try:
         await client.promote_chat_member(
@@ -507,9 +550,13 @@ async def cmd_demote(client: Client, message: Message):
     if not await validate_bot_moderation(client, message, "can_promote_members"):
         return
 
-    target = await get_target_user(client, message, default_to_sender=True)
+    target = await get_target_user(client, message, default_to_sender=False)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply(
+            "❌ No target user found.\n\n"
+            "Usage:\nReply to a user's message:\n`/demote`\n\n"
+            "Or use:\n`/demote @username`"
+        )
     
     try:
         await client.promote_chat_member(

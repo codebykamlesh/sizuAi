@@ -1,7 +1,6 @@
 """
 Sizu AI Bot — Centralized Command Registry
 """
-import difflib
 from pyrogram import Client
 from pyrogram.types import Message, BotCommand
 from pyrogram.enums import ChatMemberStatus, ChatType
@@ -197,7 +196,7 @@ class CommandRegistry:
             lines.pop()
         lines.append("╰──────────────────────────────╯")
         lines.append("")
-        lines.append("_Powered by DeepSeek · Built with ❤️_")
+        lines.append("_Built with ❤️_")
         return "\n".join(lines)
 
 # Registry instance singleton

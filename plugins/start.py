@@ -4,7 +4,7 @@
 import time
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from utils.helpers import get_name, get_target_user
+from utils.helpers import get_name, get_target_user, handle_bot_target
 
 from config import Config
 from database.mongo import db
@@ -64,7 +64,7 @@ async def cmd_start(client: Client, message: Message):
     description="Show all commands or details of a specific command.",
     category="General",
     syntax="/help [command]",
-    examples=["/help", "/help note"]
+    examples=["/help", "/help alive"]
 )
 async def cmd_help(client: Client, message: Message):
     args = message.command[1:]
@@ -103,7 +103,7 @@ async def cmd_alive(client: Client, message: Message):
         f"💅 **Sizu is Alive!**\n\n"
         f"**Version:** `{Config.BOT_VERSION}`\n"
         f"**Uptime:** `{uptime}`\n"
-        f"**Model:** `{Config.AI_MODEL}`\n"
+        f"**AI Engine:** `Active`\n"
         f"**Database:** `{'MongoDB ✅' if _db.is_connected else 'Memory ⚠️'}`\n"
         f"**Users:** `{user_count}`\n"
         f"**Memories:** `{mem_count}`\n\n"
@@ -140,8 +140,11 @@ async def cmd_ping(client: Client, message: Message):
 async def cmd_id(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply("❌ No target user found.")
+        return await message.reply("❌ User not found.")
     
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     await message.reply(
         f"👤 Name: {name}\n"
@@ -160,47 +163,29 @@ async def cmd_id(client: Client, message: Message):
 async def cmd_info(client: Client, message: Message):
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
-        return await message.reply(
-            "❌ No target user found.\n\n"
-            "Usage:\nReply to a user's message:\n`/info`\n\n"
-            "Or use:\n`/info @username`"
-        )
+        return await message.reply("❌ User not found.")
 
-    # Fetch the full user object to ensure all fields (dc_id, premium, phone) are populated
+    if await handle_bot_target(client, message, target):
+        return
+
+    # Fetch full user to ensure all fields are populated
     try:
         target = await client.get_users(target.id)
     except Exception:
         pass
 
     name = get_name(target)
-    username = f"@{target.username}" if target.username else "None"
-    user_id = target.id
-    mention_link = f"[Click Here](tg://user?id={target.id})"
+    username_val = f"@{target.username}" if target.username else "Not Available"
+    phone_val = getattr(target, "phone_number", None)
     
-    if target.is_bot:
-        bot_status = "Bot 🤖"
-    elif target.id == Config.OWNER_ID:
-        bot_status = "Bot Owner 👑"
-    elif await db.is_sizu_admin(target.id):
-        bot_status = "Sizu Admin 🛡️"
-    elif target.id in Config.SUDO_USERS:
-        bot_status = "Sudo User 🔑"
+    lines = [
+        f"👤 Name: {name}",
+        f"🔗 Username: {username_val}",
+        f"🆔 User ID: {target.id}",
+    ]
+    if phone_val:
+        lines.append(f"📱 Phone Number: {phone_val}")
     else:
-        bot_status = "User 👤"
+        lines.append("📱 Not Available")
 
-    premium_status = "Premium Status: Yes ✨" if target.is_premium else "Premium Status: No"
-    dc_id = f"DC ID: {target.dc_id}" if target.dc_id else "DC ID: Not Available"
-    phone_number = f"Phone Number: {target.phone_number}" if target.phone_number else "Phone Number: Not Available"
-
-    text = (
-        f"👤 **User Information**\n\n"
-        f"• **Name:** {name}\n"
-        f"• **Username:** {username}\n"
-        f"• **User ID:** `{user_id}`\n"
-        f"• **Mention Link:** {mention_link}\n"
-        f"• **Bot Status:** {bot_status}\n"
-        f"• **Premium:** {premium_status}\n"
-        f"• **{dc_id}**\n"
-        f"• **{phone_number}**"
-    )
-    await message.reply(text)
+    await message.reply("\n".join(lines))

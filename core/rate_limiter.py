@@ -1,10 +1,8 @@
 """
 Rate limiter — per-user request throttling with flood protection.
 """
-import asyncio
 import time
 from collections import defaultdict
-from typing import Optional
 
 from config import Config
 from utils.logger import setup_logger

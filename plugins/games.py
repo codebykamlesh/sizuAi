@@ -1,5 +1,5 @@
 """
-Games plugin — Stateful, Persistent, Multiplayer Trivia, Guess, Word Chain, RPS, Coin Flip, Truth & Dare.
+Games plugin — Stateful, Persistent, Multiplayer Puzzles, Guess, RPS, Coin Flip, Truth & Dare.
 """
 import asyncio
 import random
@@ -9,8 +9,8 @@ from pyrogram.types import Message
 from core.commands import register_command, CommandValidationError
 from database.mongo import db
 from utils.helpers import (
-    get_name, mention, random_trivia,
-    TRUTHS, DARES, get_target_user
+    get_name, mention, random_puzzles,
+    TRUTHS, DARES, get_target_user, handle_bot_target
 )
 from utils.logger import setup_logger
 
@@ -19,21 +19,22 @@ log = setup_logger("sizu.games")
 
 # ── Expiration / Timeout Tasks ────────────────────────────────────────────────
 
-async def trivia_timeout(client: Client, chat_id: int, start_time: float, answer: str):
-    """Wait 30s and expire trivia question if still active."""
+async def puzzles_timeout(client: Client, chat_id: int, start_time: float, answer_options: list[str]):
+    """Wait 30s and expire puzzles question if still active."""
     await asyncio.sleep(30)
-    state = await db.get_game_state(chat_id, "trivia")
+    state = await db.get_game_state(chat_id, "puzzles")
     if state and state.get("active") and state.get("start_time") == start_time:
         state["active"] = False
-        await db.save_game_state(chat_id, "trivia", state)
+        await db.save_game_state(chat_id, "puzzles", state)
+        display_ans = answer_options[0].title() if answer_options else "Unknown"
         try:
             await client.send_message(
                 chat_id,
                 f"⏰ **Time's up!** No one got it right.\n"
-                f"└ The correct answer was: ||{answer}||"
+                f"└ The correct answer was: ||{display_ans}||"
             )
         except Exception as e:
-            log.debug(f"Error sending trivia timeout message: {e}")
+            log.debug(f"Error sending puzzles timeout message: {e}")
 
 
 # ── Truth & Dare ──────────────────────────────────────────────────────────────
@@ -42,14 +43,18 @@ async def trivia_timeout(client: Client, chat_id: int, start_time: float, answer
     name="truth",
     description="Play truth or dare (truth question). Avoids repeats.",
     category="Games",
-    syntax="/truth",
-    examples=["/truth"]
+    syntax="/truth [@user]",
+    examples=["/truth", "/truth @username"]
 )
 async def cmd_truth(client: Client, message: Message):
     chat_id = message.chat.id
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
+        
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     
     # Fetch truth_dare state to track recently asked truths
@@ -63,7 +68,7 @@ async def cmd_truth(client: Client, message: Message):
         
     question = random.choice(available)
     recent_truths.append(question)
-    if len(recent_truths) > 15:
+    if len(recent_truths) > 30:
         recent_truths.pop(0)
         
     state["recent_truths"] = recent_truths
@@ -79,14 +84,18 @@ async def cmd_truth(client: Client, message: Message):
     name="dare",
     description="Play truth or dare (dare challenge). Avoids repeats.",
     category="Games",
-    syntax="/dare",
-    examples=["/dare"]
+    syntax="/dare [@user]",
+    examples=["/dare", "/dare @username"]
 )
 async def cmd_dare(client: Client, message: Message):
     chat_id = message.chat.id
     target = await get_target_user(client, message, default_to_sender=True)
     if not target:
         return await message.reply("❌ No target user found.")
+        
+    if await handle_bot_target(client, message, target):
+        return
+
     name = get_name(target)
     
     # Fetch truth_dare state to track recently asked dares
@@ -100,7 +109,7 @@ async def cmd_dare(client: Client, message: Message):
         
     dare_challenge = random.choice(available)
     recent_dares.append(dare_challenge)
-    if len(recent_dares) > 15:
+    if len(recent_dares) > 30:
         recent_dares.pop(0)
         
     state["recent_dares"] = recent_dares
@@ -112,87 +121,110 @@ async def cmd_dare(client: Client, message: Message):
     )
 
 
-# ── Trivia Game Engine ────────────────────────────────────────────────────────
+# ── Puzzles Game Engine ────────────────────────────────────────────────────────
 
 @register_command(
-    name="trivia",
-    description="Start a stateful trivia game round.",
+    name="puzzles",
+    description="Start a stateful puzzle game round.",
     category="Games",
-    syntax="/trivia",
-    examples=["/trivia"]
+    syntax="/puzzles",
+    examples=["/puzzles"],
+    aliases=["puzzle"]
 )
-async def cmd_trivia(client: Client, message: Message):
+async def cmd_puzzles(client: Client, message: Message):
     chat_id = message.chat.id
     
-    active_game = await db.get_game_state(chat_id, "trivia")
+    active_game = await db.get_game_state(chat_id, "puzzles")
     if active_game and active_game.get("active"):
         # Check if already timed out in real time
         if time.time() - active_game.get("start_time", 0) < 30:
-            return await message.reply("There is already an active trivia game in this chat!")
-            
-    q = random_trivia()
+            return await message.reply("There is already an active puzzles game in this chat!")
+    
+    # Get puzzle number (auto-incrementing per chat)
+    puzzle_num = (active_game or {}).get("puzzle_count", 0) + 1
+    
+    q = random_puzzles()
     start_time = time.time()
     
     state = {
         "active": True,
         "question": q["q"],
         "answer": q["a"],
+        "hint": q.get("hint", ""),
         "creator": message.from_user.id if message.from_user else 0,
         "start_time": start_time,
+        "expiration_time": start_time + 30,
         "points": 10,
+        "puzzle_count": puzzle_num,
+        "winner": None,
+        "correct_answer": q["a"][0],
     }
-    await db.save_game_state(chat_id, "trivia", state)
+    await db.save_game_state(chat_id, "puzzles", state)
     
-    await message.reply(
-        f"🧠 **Trivia Time!**\n\n"
-        f"❓ {q['q']}\n"
-        f"💡 Answer: ||{q['a']}||\n\n"
-        f"└ _First correct answer wins! (Time limit: 30s)_"
-    )
+    # Build display message
+    display = f"🧩 **Puzzle #{puzzle_num}**\n\n{q['q']}\n"
+    if q.get("hint"):
+        display += f"\n💡 **Hint:** {q['hint']}"
+    display += f"\n⏳ **Time:** 30s"
+    display += "\n\n└ _First correct answer wins!_"
+    
+    await message.reply(display)
     
     # Schedule timeout
-    asyncio.create_task(trivia_timeout(client, chat_id, start_time, q["a"]))
+    asyncio.create_task(puzzles_timeout(client, chat_id, start_time, q["a"]))
 
 
 @register_command(
-    name="trivia_top",
-    description="Show the trivia leaderboard.",
+    name="puzzles_top",
+    description="Show the puzzles leaderboard.",
     category="Games",
-    syntax="/trivia_top",
-    examples=["/trivia_top"]
+    syntax="/puzzles_top",
+    examples=["/puzzles_top"],
+    aliases=["puzzlestop", "puzzle_top"]
 )
-async def cmd_trivia_top(client: Client, message: Message):
-    top = await db.get_trivia_top(10)
+async def cmd_puzzles_top(client: Client, message: Message):
+    top = await db.get_puzzles_top(10)
     if not top:
-        return await message.reply("No trivia scores recorded yet! Play with `/trivia`.")
+        return await message.reply("No puzzle scores recorded yet! Play with `/puzzles`.")
         
-    lines = ["🏆 **Trivia Leaderboard** 🏆\n"]
+    lines = ["🏆 **Puzzles Leaderboard** 🏆\n"]
     for i, u in enumerate(top, 1):
         name = u["first_name"]
         username_str = f" (@{u['username']})" if u["username"] else ""
-        lines.append(f"{i}. **{name}**{username_str} — `{u['trivia_points']} pts`")
+        lines.append(f"{i}. **{name}**{username_str} — `{u['puzzles_points']} pts`")
         
     await message.reply("\n".join(lines))
 
 
 @Client.on_message(filters.text & ~filters.bot, group=1)
-async def trivia_answer_check(client: Client, message: Message):
+async def puzzles_answer_check(client: Client, message: Message):
     chat_id = message.chat.id
-    state = await db.get_game_state(chat_id, "trivia")
+    state = await db.get_game_state(chat_id, "puzzles")
     if not state or not state.get("active"):
         return
         
     # Check timeout manually as backup
     if time.time() - state.get("start_time", 0) >= 30:
         state["active"] = False
-        await db.save_game_state(chat_id, "trivia", state)
+        await db.save_game_state(chat_id, "puzzles", state)
         return
 
     user_answer = (message.text or "").strip().lower()
-    correct_answer = state["answer"].lower()
     
-    # Match exact or close match (e.g. Vatican City -> vatican city or vatican)
-    if user_answer == correct_answer or (len(user_answer) >= 3 and user_answer in correct_answer):
+    # Ignore commands
+    if user_answer.startswith("/"):
+        return
+    
+    correct_options = [ans.lower() for ans in state["answer"]]
+    
+    # Deterministic answer checking — exact match or close substring
+    matched = False
+    for opt in correct_options:
+        if user_answer == opt or (len(user_answer) >= 3 and user_answer in opt) or (len(opt) >= 3 and opt in user_answer):
+            matched = True
+            break
+
+    if matched:
         user = message.from_user
         if not user:
             return
@@ -200,18 +232,24 @@ async def trivia_answer_check(client: Client, message: Message):
         # Prevent race condition / duplicate winners: set inactive before doing replies
         state["active"] = False
         state["answered_by"] = user.id
-        await db.save_game_state(chat_id, "trivia", state)
+        state["winner"] = user.id
+        await db.save_game_state(chat_id, "puzzles", state)
         
         name = get_name(user)
         mention_str = f"@{user.username}" if user.username else mention(user.id, name)
         
         points = state.get("points", 10)
-        await db.add_trivia_points(user.id, user.first_name or "Someone", user.username or "", points)
+        await db.add_puzzles_points(user.id, user.first_name or "Someone", user.username or "", points)
         
+        display_ans = state["answer"][0].title()
         await message.reply(
             f"🎉 **Correct!** {mention_str} got it right (+{points} pts).\n"
-            f"└ The answer was: **{state['answer']}**"
+            f"└ The answer was: **{display_ans}**"
         )
+        
+        # CRITICAL: Stop message from reaching AI chat handler
+        message.stop_propagation()
+    # If wrong answer, don't stop propagation — let it pass through silently
 
 
 # ── Guess the Number ──────────────────────────────────────────────────────────
@@ -290,110 +328,9 @@ async def guess_check(client: Client, message: Message):
         await message.reply(f"📈 Higher! (guess: {guess}, attempts: {state['attempts']})")
     else:
         await message.reply(f"📉 Lower! (guess: {guess}, attempts: {state['attempts']})")
-
-
-# ── Word Chain ────────────────────────────────────────────────────────────────
-
-@register_command(
-    name="wordchain",
-    description="Start a wordchain game.",
-    category="Games",
-    syntax="/wordchain",
-    examples=["/wordchain"]
-)
-async def cmd_wordchain_start(client: Client, message: Message):
-    chat_id = message.chat.id
-    active_game = await db.get_game_state(chat_id, "wordchain")
-    if active_game and active_game.get("active"):
-        return await message.reply("A wordchain game is already active in this chat! Type `/stopchain` to stop.")
-        
-    starter = "apple"
-    state = {
-        "active": True,
-        "last_word": starter,
-        "last_player_id": 0,
-        "used_words": [starter]
-    }
-    await db.save_game_state(chat_id, "wordchain", state)
     
-    await message.reply(
-        f"🔗 **Word Chain started!**\n\n"
-        f"I'll start: **{starter}**\n\n"
-        f"Your word must start with **'{starter[-1].upper()}'**.\n"
-        f"└ _Type `/stopchain` to end. Players must alternate turns!_"
-    )
-
-
-@register_command(
-    name="stopchain",
-    description="Stop the active wordchain game.",
-    category="Games",
-    syntax="/stopchain",
-    examples=["/stopchain"],
-    is_hidden=True
-)
-async def cmd_wordchain_stop(client: Client, message: Message):
-    chat_id = message.chat.id
-    state = await db.get_game_state(chat_id, "wordchain")
-    if state and state.get("active"):
-        await db.clear_game_state(chat_id, "wordchain")
-        await message.reply("Word chain ended! 🛑")
-    else:
-        await message.reply("No active wordchain game in this chat.")
-
-
-@Client.on_message(filters.text & ~filters.bot, group=3)
-async def wordchain_check(client: Client, message: Message):
-    chat_id = message.chat.id
-    state = await db.get_game_state(chat_id, "wordchain")
-    if not state or not state.get("active"):
-        return
-        
-    word = (message.text or "").strip().lower()
-    
-    # Check if single word, only alphabetical, length >= 2
-    if " " in word or not word.isalpha() or len(word) < 2:
-        return
-        
-    user = message.from_user
-    if not user:
-        return
-        
-    # Track player turns (alternate turns)
-    if state.get("last_player_id") == user.id:
-        await message.reply("❌ It's not your turn! Let someone else play next.")
-        return
-        
-    # Validate starting letter
-    last_word = state["last_word"]
-    required_letter = last_word[-1]
-    if not word.startswith(required_letter):
-        await message.reply(
-            f"❌ Invalid letter! Your word must start with **'{required_letter.upper()}'**.\n"
-            f"└ Last word: _{last_word}_"
-        )
-        return
-        
-    # Reject already used words
-    used_words = state.get("used_words", [])
-    if word in used_words:
-        await message.reply(f"❌ **{word}** has already been used in this game!")
-        return
-        
-    # Valid word!
-    used_words.append(word)
-    state["last_word"] = word
-    state["last_player_id"] = user.id
-    state["used_words"] = used_words
-    
-    await db.save_game_state(chat_id, "wordchain", state)
-    
-    # Score user
-    await db.add_wordchain_points(user.id, user.first_name or "Someone", user.username or "", 5)
-    
-    await message.reply(
-        f"✅ **{word}** (+5 pts) — now your turn! Start with **'{word[-1].upper()}'** 🔗"
-    )
+    # CRITICAL: Stop message from reaching AI chat handler
+    message.stop_propagation()
 
 
 # ── Rock Paper Scissors ───────────────────────────────────────────────────────
